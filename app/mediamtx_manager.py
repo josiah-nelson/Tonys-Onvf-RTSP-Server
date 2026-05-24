@@ -636,9 +636,8 @@ class MediaMTXManager:
                         # Determine encoder arguments
                         if use_hw_accel and hw_accel_info:
                              encoder_args = f'-c:v {hw_accel_info["encoder"]} {hw_accel_info["params"]}'
-                        # Software encoding with optimized preset
-                        # 'ultrafast' is used to minimize latency at the cost of bitrate efficiency
-                        encoder_args = '-c:v libx264 -preset ultrafast -tune zerolatency'
+                        else:
+                            encoder_args = '-c:v libx264 -preset ultrafast -tune zerolatency'
 
                         # Final command - optimized for multi-core CPU utilization and stability
                         # -threads 0: Auto-detect and use all available CPU cores
@@ -710,7 +709,16 @@ class MediaMTXManager:
                     "encoder": "h264_amf",
                     "params": "-usage ultra_low_latency -quality speed -rc cqp"
                 }
-                
+
+            # Check for macOS VideoToolbox
+            if "h264_videotoolbox" in stdout:
+                return {
+                    "name": "Apple VideoToolbox",
+                    "type": "videotoolbox",
+                    "encoder": "h264_videotoolbox",
+                    "params": "-realtime 1 -allow_sw 0"
+                }
+
             return None
             
         except Exception as e:

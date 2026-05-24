@@ -127,7 +127,6 @@ class RTSPFrameGrabber:
                 pass
             self.cap = None
 
-import threading
 from .ai_device import get_shared_model as get_shared_ai_model, AI_INFERENCE_LOCK as _AI_INFERENCE_LOCK
 
 class VirtualONVIFCamera:

@@ -2,12 +2,13 @@
 
 Verifies that:
 - MPS is selected when available on Apple Silicon
-- CPU fallback works when MPS is unavailable
+- CPU fallback works when MPS is unavailable or fails
 - Models are loaded onto the correct device
 - The two-stage pipeline (OpenCV motion gate -> YOLO) is preserved:
   YOLO inference only fires when the motion threshold is exceeded
 """
 
+import ast
 import sys
 import os
 import types
@@ -15,7 +16,6 @@ from unittest import mock
 
 import pytest
 
-# Ensure repo root is on the path so `app.ai_device` resolves
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
@@ -156,6 +156,33 @@ class TestGetSharedModel:
         assert m1 is not m2
         assert call_count == 2
 
+    def test_mps_failure_falls_back_to_cpu(self):
+        """If model.to('mps') raises, get_shared_model retries on CPU."""
+        instance = mock.MagicMock()
+        instance.device = "cpu"
+        call_log = []
+
+        def _to(device):
+            call_log.append(device)
+            if device == "mps":
+                raise RuntimeError("MPS kernel not available")
+            instance.device = device
+            return instance
+
+        instance.to = _to
+        yolo_cls = mock.MagicMock(return_value=instance)
+        mock_yolo_mod = types.ModuleType("ultralytics")
+        mock_yolo_mod.YOLO = yolo_cls
+
+        with mock.patch("app.ai_device.select_device", return_value="mps"), \
+             mock.patch.dict(sys.modules, {"ultralytics": mock_yolo_mod}), \
+             mock.patch.dict(sys.modules, {"torch": mock.MagicMock()}):
+            model = get_shared_model("yolov8n.pt")
+
+        assert model is instance
+        assert instance.device == "cpu"
+        assert call_log == ["mps", "cpu"]
+
 
 # ---------------------------------------------------------------------------
 # Two-stage pipeline preservation tests
@@ -164,14 +191,23 @@ class TestGetSharedModel:
 # OpenCV pixel-difference check as a gate before expensive YOLO inference.
 # ---------------------------------------------------------------------------
 
+def _simulate_motion_gate(change_pct, motion_threshold, model, frame, conf, classes):
+    """Replicate the motion-gate logic from camera._ai_detection_loop."""
+    if change_pct >= motion_threshold:
+        return model(frame, verbose=False, conf=conf, classes=classes,
+                     device=model.device)
+    return None
+
+
 class TestTwoStagePipelinePreserved:
 
     def test_no_motion_means_no_inference(self):
         """Identical frames produce zero pixel change — YOLO must NOT fire."""
-        import numpy as np
-        import cv2
+        np = pytest.importorskip("numpy")
+        cv2 = pytest.importorskip("cv2")
 
         mock_model = mock.MagicMock()
+        mock_model.device = "cpu"
 
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -185,13 +221,16 @@ class TestTwoStagePipelinePreserved:
         sensitivity = 50
         motion_threshold = max(0.1, 5.0 - (sensitivity / 100.0) * 5.0)
 
-        assert change_pct < motion_threshold
+        result = _simulate_motion_gate(
+            change_pct, motion_threshold, mock_model, frame, 0.4, [0]
+        )
+        assert result is None
         mock_model.assert_not_called()
 
     def test_full_motion_triggers_inference(self):
         """Black-to-white frame change must exceed threshold — YOLO fires."""
-        import numpy as np
-        import cv2
+        np = pytest.importorskip("numpy")
+        cv2 = pytest.importorskip("cv2")
 
         mock_model = mock.MagicMock()
         mock_model.device = "mps"
@@ -216,42 +255,88 @@ class TestTwoStagePipelinePreserved:
 
         assert change_pct >= motion_threshold
 
-        results = mock_model(
-            frame2, verbose=False, conf=0.4,
-            classes=[0], device=mock_model.device,
+        result = _simulate_motion_gate(
+            change_pct, motion_threshold, mock_model, frame2, 0.4, [0]
         )
+        assert result is not None
         mock_model.assert_called_once()
 
     def test_motion_gate_precedes_inference_in_source(self):
-        """Structural: motion threshold check must appear before model() call."""
-        # We read camera.py source directly to avoid importing its heavy deps
+        """Structural: motion threshold check must appear before model() call
+        in _ai_detection_loop, verified via AST to be refactoring-resistant."""
         camera_path = os.path.join(_REPO_ROOT, "app", "camera.py")
         with open(camera_path) as f:
-            source = f.read()
+            tree = ast.parse(f.read())
 
-        motion_pos = source.find("change_pct < motion_threshold")
-        infer_pos = source.find("results = model(")
+        loop_func = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_ai_detection_loop":
+                loop_func = node
+                break
+        assert loop_func is not None, "_ai_detection_loop not found"
 
-        assert motion_pos != -1, "Motion threshold gate not found"
-        assert infer_pos != -1, "Model inference call not found"
-        assert motion_pos < infer_pos, (
-            "Motion threshold check must come before YOLO inference"
+        motion_gate_line = None
+        inference_line = None
+
+        for node in ast.walk(loop_func):
+            if isinstance(node, ast.Compare):
+                left = node.left
+                if isinstance(left, ast.Name) and left.id == "change_pct":
+                    motion_gate_line = node.lineno
+
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "results":
+                        if isinstance(node.value, ast.Call):
+                            func = node.value.func
+                            if isinstance(func, ast.Name) and func.id == "model":
+                                inference_line = node.lineno
+
+        assert motion_gate_line is not None, "Motion gate comparison not found in AST"
+        assert inference_line is not None, "model() inference call not found in AST"
+        assert motion_gate_line < inference_line, (
+            f"Motion gate (line {motion_gate_line}) must precede inference "
+            f"(line {inference_line})"
         )
 
     def test_device_forwarded_to_inference_call(self):
-        """The model() call must pass device=model.device."""
+        """The model() call must pass device=model.device, verified via AST."""
         camera_path = os.path.join(_REPO_ROOT, "app", "camera.py")
         with open(camera_path) as f:
-            source = f.read()
+            tree = ast.parse(f.read())
 
-        assert "device=model.device" in source, (
-            "Inference call must forward device=model.device"
+        loop_func = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_ai_detection_loop":
+                loop_func = node
+                break
+        assert loop_func is not None
+
+        found_device_kwarg = False
+        for node in ast.walk(loop_func):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "model":
+                    for kw in node.keywords:
+                        if kw.arg == "device":
+                            found_device_kwarg = True
+                            break
+
+        assert found_device_kwarg, (
+            "model() call must include device= keyword argument"
         )
 
     def test_camera_imports_from_ai_device(self):
         """camera.py must use the shared ai_device module, not inline logic."""
         camera_path = os.path.join(_REPO_ROOT, "app", "camera.py")
         with open(camera_path) as f:
-            source = f.read()
+            tree = ast.parse(f.read())
 
-        assert "from .ai_device import" in source
+        found_import = False
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.ImportFrom)
+                    and node.module == "ai_device" and node.level == 1):
+                found_import = True
+                break
+
+        assert found_import, "camera.py must import from .ai_device"

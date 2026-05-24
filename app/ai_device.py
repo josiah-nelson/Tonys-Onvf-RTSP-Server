@@ -44,7 +44,15 @@ def get_shared_model(model_name):
                 pass
             device = select_device()
             model = YOLO(model_name)
-            model.to(device)
+            try:
+                model.to(device)
+            except Exception as e:
+                if device != "cpu":
+                    print(f"  [AI] Warning: {device} failed ({e}), falling back to CPU")
+                    device = "cpu"
+                    model.to(device)
+                else:
+                    raise
             _AI_MODELS[model_name] = model
             print(f"  [AI] Loaded {model_name} on device: {device}")
         return _AI_MODELS[model_name]

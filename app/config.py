@@ -18,14 +18,22 @@ def _env_int(name, default):
     val = os.environ.get(name, "").strip()
     if not val:
         return default
-    return int(val)
+    try:
+        return int(val)
+    except ValueError:
+        print(f"  [Config] Warning: {name}={val!r} is not a valid integer, using default {default}")
+        return default
 
 
 def _env_float(name, default):
     val = os.environ.get(name, "").strip()
     if not val:
         return default
-    return float(val)
+    try:
+        return float(val)
+    except ValueError:
+        print(f"  [Config] Warning: {name}={val!r} is not a valid number, using default {default}")
+        return default
 
 
 def _env_str(name, default):
@@ -49,6 +57,28 @@ AI_COOLDOWN_SECONDS = max(0.0, _env_float("AI_COOLDOWN_SECONDS", 5.0))
 AI_TARGET_INTERVAL = max(0.01, _env_float("AI_TARGET_INTERVAL", 0.50))
 
 # Video encoding (GridFusion)
-GF_VIDEO_BITRATE = _env_str("GF_VIDEO_BITRATE", "2500k")
-GF_VIDEO_BUFSIZE = _env_str("GF_VIDEO_BUFSIZE", "5000k")
-GF_ENCODER_PRESET = _env_str("GF_ENCODER_PRESET", "ultrafast")
+import re as _re
+
+_BITRATE_RE = _re.compile(r"^\d+[kKmM]?$")
+_X264_PRESETS = {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"}
+
+
+def _env_bitrate(name, default):
+    val = _env_str(name, default)
+    if not _BITRATE_RE.match(val):
+        print(f"  [Config] Warning: {name}={val!r} is not a valid bitrate, using default {default}")
+        return default
+    return val
+
+
+def _env_preset(name, default):
+    val = _env_str(name, default)
+    if val not in _X264_PRESETS:
+        print(f"  [Config] Warning: {name}={val!r} is not a valid x264 preset, using default {default}")
+        return default
+    return val
+
+
+GF_VIDEO_BITRATE = _env_bitrate("GF_VIDEO_BITRATE", "2500k")
+GF_VIDEO_BUFSIZE = _env_bitrate("GF_VIDEO_BUFSIZE", "5000k")
+GF_ENCODER_PRESET = _env_preset("GF_ENCODER_PRESET", "ultrafast")

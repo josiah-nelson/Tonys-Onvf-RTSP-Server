@@ -4,7 +4,9 @@ Verifies that:
 - All config values have correct defaults when no .env is present
 - Environment variable overrides work for all value types (int, float, str)
 - Empty string env vars fall back to defaults (Docker-safe)
+- Malformed values fall back to defaults with a warning (not a crash)
 - Boundary validation prevents dangerous values
+- FFmpeg params are validated against safe patterns
 """
 
 import importlib
@@ -29,12 +31,13 @@ _CONFIG_KEYS = [
 def _reload_config(**env_overrides):
     """Reload app.config with optional env var overrides.
 
-    Strips known config keys from the environment first so that
-    CI/Docker env vars don't leak into default-value assertions.
+    Strips known config keys and stubs load_dotenv so that neither CI
+    env vars nor a developer's local .env file affect test assertions.
     """
     clean_env = {k: v for k, v in os.environ.items() if k not in _CONFIG_KEYS}
     clean_env.update(env_overrides)
-    with mock.patch.dict(os.environ, clean_env, clear=True):
+    with mock.patch.dict(os.environ, clean_env, clear=True), \
+         mock.patch("app.config.load_dotenv", side_effect=None, create=True):
         import app.config
         importlib.reload(app.config)
         return app.config
@@ -104,7 +107,6 @@ class TestEnvOverrides:
 
 
 class TestEmptyStringFallback:
-    """Empty env vars (common in Docker) should fall back to defaults."""
 
     def test_empty_int_falls_back(self):
         assert _reload_config(WEB_UI_PORT="").WEB_UI_PORT == 5552
@@ -119,8 +121,20 @@ class TestEmptyStringFallback:
         assert _reload_config(WSGI_MAX_WORKERS="  ").WSGI_MAX_WORKERS == 20
 
 
+class TestMalformedValues:
+    """Malformed env vars should fall back to defaults, not crash."""
+
+    def test_non_numeric_int_falls_back(self):
+        assert _reload_config(WEB_UI_PORT="abc").WEB_UI_PORT == 5552
+
+    def test_non_numeric_float_falls_back(self):
+        assert _reload_config(AI_COOLDOWN_SECONDS="xyz").AI_COOLDOWN_SECONDS == 5.0
+
+    def test_non_numeric_workers_falls_back(self):
+        assert _reload_config(WSGI_MAX_WORKERS="auto").WSGI_MAX_WORKERS == 20
+
+
 class TestBoundaryValidation:
-    """Critical numeric values are clamped to safe minimums."""
 
     def test_wsgi_workers_minimum_1(self):
         assert _reload_config(WSGI_MAX_WORKERS="0").WSGI_MAX_WORKERS == 1
@@ -129,29 +143,47 @@ class TestBoundaryValidation:
         assert _reload_config(AI_INFERENCE_FRAME_WIDTH="0").AI_INFERENCE_FRAME_WIDTH == 1
 
     def test_target_interval_minimum(self):
-        cfg = _reload_config(AI_TARGET_INTERVAL="0")
-        assert cfg.AI_TARGET_INTERVAL >= 0.01
+        assert _reload_config(AI_TARGET_INTERVAL="0").AI_TARGET_INTERVAL >= 0.01
 
     def test_cooldown_minimum_0(self):
         assert _reload_config(AI_COOLDOWN_SECONDS="-1").AI_COOLDOWN_SECONDS == 0.0
 
 
+class TestFFmpegParamValidation:
+
+    def test_valid_bitrate_accepted(self):
+        assert _reload_config(GF_VIDEO_BITRATE="5000k").GF_VIDEO_BITRATE == "5000k"
+
+    def test_valid_bitrate_mega(self):
+        assert _reload_config(GF_VIDEO_BITRATE="5M").GF_VIDEO_BITRATE == "5M"
+
+    def test_invalid_bitrate_falls_back(self):
+        assert _reload_config(GF_VIDEO_BITRATE="foo bar").GF_VIDEO_BITRATE == "2500k"
+
+    def test_bitrate_injection_blocked(self):
+        assert _reload_config(GF_VIDEO_BITRATE="2500k -i /etc/passwd").GF_VIDEO_BITRATE == "2500k"
+
+    def test_valid_preset_accepted(self):
+        assert _reload_config(GF_ENCODER_PRESET="slow").GF_ENCODER_PRESET == "slow"
+
+    def test_invalid_preset_falls_back(self):
+        assert _reload_config(GF_ENCODER_PRESET="malicious -x").GF_ENCODER_PRESET == "ultrafast"
+
+    def test_unknown_preset_falls_back(self):
+        assert _reload_config(GF_ENCODER_PRESET="turbo").GF_ENCODER_PRESET == "ultrafast"
+
+
 class TestEnvExampleFile:
 
     def test_env_example_exists(self):
-        path = os.path.join(_REPO_ROOT, ".env.example")
-        assert os.path.isfile(path)
+        assert os.path.isfile(os.path.join(_REPO_ROOT, ".env.example"))
 
     def test_env_example_documents_all_config_vars(self):
-        path = os.path.join(_REPO_ROOT, ".env.example")
-        with open(path) as f:
+        with open(os.path.join(_REPO_ROOT, ".env.example")) as f:
             content = f.read()
-
         for var in _CONFIG_KEYS:
             assert var in content, f"{var} not documented in .env.example"
 
     def test_env_in_gitignore(self):
-        path = os.path.join(_REPO_ROOT, ".gitignore")
-        with open(path) as f:
-            content = f.read()
-        assert ".env" in content
+        with open(os.path.join(_REPO_ROOT, ".gitignore")) as f:
+            assert ".env" in f.read()

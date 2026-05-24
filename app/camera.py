@@ -836,7 +836,7 @@ class VirtualONVIFCamera:
                     h, w = raw_frame.shape[:2]
                     if w > AI_INFERENCE_FRAME_WIDTH:
                         scale = float(AI_INFERENCE_FRAME_WIDTH) / w
-                        frame = cv2.resize(raw_frame, (AI_INFERENCE_FRAME_WIDTH, int(h * scale)))
+                        frame = cv2.resize(raw_frame, (AI_INFERENCE_FRAME_WIDTH, max(1, int(h * scale))))
                     else:
                         frame = raw_frame
                         

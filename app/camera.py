@@ -128,24 +128,7 @@ class RTSPFrameGrabber:
             self.cap = None
 
 import threading
-# Global AI state for memory management across all cameras
-_AI_MODELS = {}
-_AI_MODEL_LOCK = threading.Lock()
-_AI_INFERENCE_LOCK = threading.Lock()
-
-def get_shared_ai_model(model_name):
-    global _AI_MODELS
-    with _AI_MODEL_LOCK:
-        if model_name not in _AI_MODELS:
-            from ultralytics import YOLO
-            try:
-                import torch
-                # Limit threads so multiple cameras don't oversubscribe CPU cores and exhaust memory
-                torch.set_num_threads(2)
-            except Exception:
-                pass
-            _AI_MODELS[model_name] = YOLO(model_name)
-        return _AI_MODELS[model_name]
+from .ai_device import get_shared_model as get_shared_ai_model, AI_INFERENCE_LOCK as _AI_INFERENCE_LOCK
 
 class VirtualONVIFCamera:
     """Represents a virtual ONVIF camera"""
@@ -910,7 +893,7 @@ class VirtualONVIFCamera:
                             t_queue_start = time.time()
                             with _AI_INFERENCE_LOCK:
                                 t_inference_start = time.time()
-                                results = model(frame, verbose=False, conf=conf_threshold, classes=monitored_classes)
+                                results = model(frame, verbose=False, conf=conf_threshold, classes=monitored_classes, device=model.device)
                                 t_inference_end = time.time()
                                 
                             self.ai_queue_time = round(t_inference_start - t_queue_start, 3)

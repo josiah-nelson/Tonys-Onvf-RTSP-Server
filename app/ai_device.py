@@ -39,7 +39,19 @@ def get_shared_model(model_name):
             from ultralytics import YOLO
             try:
                 import torch
-                torch.set_num_threads(2)
+                import os as _os
+                _cpu_count = _os.cpu_count()
+                _env_threads = _os.environ.get("AI_TORCH_THREADS")
+                if _env_threads is not None:
+                    try:
+                        _thread_count = max(1, int(_env_threads))
+                    except ValueError:
+                        print(f"  [AI] Warning: AI_TORCH_THREADS={_env_threads!r} is not a valid integer, using default")
+                        _thread_count = min(4, max(1, (_cpu_count or 2) // 2))
+                else:
+                    _thread_count = min(4, max(1, (_cpu_count or 2) // 2))
+                torch.set_num_threads(_thread_count)
+                print(f"  [AI] PyTorch using {_thread_count} threads (cpu_count={_cpu_count})")
             except Exception:
                 pass
             device = select_device()

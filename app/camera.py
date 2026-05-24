@@ -15,6 +15,7 @@ from .config import MEDIAMTX_PORT
 from .onvif_service import ONVIFService
 from .linux_network import LinuxNetworkManager
 from .utils import get_local_ip
+from .ai_device import get_shared_model as get_shared_ai_model, AI_INFERENCE_LOCK as _AI_INFERENCE_LOCK
 
 
 class ThreadPoolWSGIServer(ThreadedWSGIServer):
@@ -126,8 +127,6 @@ class RTSPFrameGrabber:
             except Exception:
                 pass
             self.cap = None
-
-from .ai_device import get_shared_model as get_shared_ai_model, AI_INFERENCE_LOCK as _AI_INFERENCE_LOCK
 
 class VirtualONVIFCamera:
     """Represents a virtual ONVIF camera"""

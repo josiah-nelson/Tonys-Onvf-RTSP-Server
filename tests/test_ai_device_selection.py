@@ -192,7 +192,12 @@ class TestGetSharedModel:
 # ---------------------------------------------------------------------------
 
 def _simulate_motion_gate(change_pct, motion_threshold, model, frame, conf, classes):
-    """Replicate the motion-gate logic from camera._ai_detection_loop."""
+    """Replicate the core motion-gate decision from camera._ai_detection_loop.
+
+    Note: zone-mask normalization is not replicated here — that path
+    adjusts the change_pct denominator but does not change the gate
+    decision logic. Zone behavior is an integration concern.
+    """
     if change_pct >= motion_threshold:
         return model(frame, verbose=False, conf=conf, classes=classes,
                      device=model.device)

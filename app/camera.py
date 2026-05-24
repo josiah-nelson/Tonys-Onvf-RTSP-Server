@@ -14,6 +14,8 @@ from werkzeug.serving import make_server, ThreadedWSGIServer
 from .config import (
     MEDIAMTX_PORT, WSGI_MAX_WORKERS, AI_DEFAULT_MODEL,
     AI_INFERENCE_FRAME_WIDTH, AI_COOLDOWN_SECONDS, AI_TARGET_INTERVAL,
+    AI_CONFIDENCE_THRESHOLD, AI_MOTION_SENSITIVITY,
+    GRABBER_RECONNECT_BASE, GRABBER_RECONNECT_MAX,
 )
 from .onvif_service import ONVIFService
 from .linux_network import LinuxNetworkManager
@@ -81,7 +83,8 @@ class RTSPFrameGrabber:
     def _grab_loop(self):
         import time
         last_frame_time = time.time()
-        
+        reconnect_delay = GRABBER_RECONNECT_BASE
+
         while self.running:
             if self.cap and self.cap.isOpened():
                 try:
@@ -89,6 +92,7 @@ class RTSPFrameGrabber:
                     if ret:
                         self.latest_frame = frame
                         last_frame_time = time.time()
+                        reconnect_delay = GRABBER_RECONNECT_BASE
                     else:
                         time.sleep(0.01)
                         if time.time() - last_frame_time > 5.0:
@@ -114,8 +118,9 @@ class RTSPFrameGrabber:
                 except Exception as e:
                     print(f"  [AI Camera Grabber] Error connecting to {self.rtsp_url}: {e}")
                 last_frame_time = time.time()
-                time.sleep(1.0)
-                
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, GRABBER_RECONNECT_MAX)
+
     def stop(self):
         self.running = False
         if self.thread:
@@ -202,8 +207,8 @@ class VirtualONVIFCamera:
         self.ai_targets = config.get('aiTargets', ['person', 'vehicle'])
         self.ai_model = config.get('aiModel', AI_DEFAULT_MODEL)
         self.ai_motion_detection_enabled = config.get('aiMotionDetectionEnabled', True)
-        self.ai_motion_sensitivity = config.get('aiMotionSensitivity', 50)
-        self.ai_confidence_threshold = config.get('aiConfidenceThreshold', 40)
+        self.ai_motion_sensitivity = config.get('aiMotionSensitivity', AI_MOTION_SENSITIVITY)
+        self.ai_confidence_threshold = config.get('aiConfidenceThreshold', AI_CONFIDENCE_THRESHOLD)
         self.ai_zone = config.get('aiZone', [])
         self.send_smart_onvif_topics = config.get('sendSmartOnvifTopics', True)
         self._active_smart_tags = set()

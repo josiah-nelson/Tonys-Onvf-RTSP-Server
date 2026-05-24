@@ -63,6 +63,12 @@ AI_DEFAULT_MODEL = _env_str("AI_DEFAULT_MODEL", "yolov8n.pt")
 AI_INFERENCE_FRAME_WIDTH = max(1, _env_int("AI_INFERENCE_FRAME_WIDTH", 640))
 AI_COOLDOWN_SECONDS = max(0.0, _env_float("AI_COOLDOWN_SECONDS", 5.0))
 AI_TARGET_INTERVAL = max(0.01, _env_float("AI_TARGET_INTERVAL", 0.50))
+AI_CONFIDENCE_THRESHOLD = max(1, min(100, _env_int("AI_CONFIDENCE_THRESHOLD", 40)))
+AI_MOTION_SENSITIVITY = max(1, min(100, _env_int("AI_MOTION_SENSITIVITY", 50)))
+
+# RTSP frame grabber
+GRABBER_RECONNECT_BASE = max(0.5, _env_float("GRABBER_RECONNECT_BASE", 1.0))
+GRABBER_RECONNECT_MAX = max(1.0, _env_float("GRABBER_RECONNECT_MAX", 30.0))
 
 # Video encoding (GridFusion)
 import re as _re

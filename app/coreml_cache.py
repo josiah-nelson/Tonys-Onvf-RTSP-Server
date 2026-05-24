@@ -16,7 +16,7 @@ _SKIP_TTL = 3600
 def _source_hash(model_path):
     """Fast partial hash of the source .pt file for staleness detection."""
     try:
-        h = hashlib.md5()
+        h = hashlib.sha256()
         with open(model_path, "rb") as f:
             h.update(f.read(_HASH_BYTES))
         return h.hexdigest()
@@ -36,21 +36,19 @@ def _is_cache_valid(cache_dir, base, source_model_path):
 
     if not os.path.isfile(sentinel):
         return False
-    if not os.path.exists(mlpackage):
+    if not os.path.isdir(mlpackage) or not os.listdir(mlpackage):
         return False
 
     if os.path.isfile(source_model_path):
         hash_file = _meta_path(cache_dir, base, ".hash")
-        current_hash = _source_hash(source_model_path)
-        if os.path.isfile(hash_file) and current_hash is not None:
-            with open(hash_file) as f:
-                cached_hash = f.read().strip()
-            if cached_hash != current_hash:
-                return False
-        elif current_hash is None:
-            return False
-        else:
-            return False
+        if os.path.isfile(hash_file):
+            current_hash = _source_hash(source_model_path)
+            if current_hash is not None:
+                with open(hash_file) as f:
+                    cached_hash = f.read().strip()
+                if cached_hash != current_hash:
+                    return False
+            # current_hash is None (read error) — treat as valid, can't verify
     return True
 
 

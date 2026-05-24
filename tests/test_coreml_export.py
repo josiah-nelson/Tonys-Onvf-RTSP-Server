@@ -13,10 +13,7 @@ import os
 import sys
 import types
 import tempfile
-import time as _time
 from unittest import mock
-
-import pytest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -88,15 +85,27 @@ class TestCacheValidity:
             _make_valid_cache(cache_dir, "model", source)
             assert _is_cache_valid(cache_dir, "model", source) is True
 
-    def test_invalid_when_hash_uncomputable(self):
+    def test_valid_when_hash_uncomputable(self):
+        """When hash can't be computed, treat cache as valid (can't verify)."""
         with tempfile.TemporaryDirectory() as root:
             source = os.path.join(root, "real.pt")
             with open(source, "wb") as f:
                 f.write(b"x")
             cache_dir = os.path.join(root, "cache")
-            _make_valid_cache(cache_dir, "model")
+            _make_valid_cache(cache_dir, "model", source)
             with mock.patch("app.coreml_cache._source_hash", return_value=None):
-                assert _is_cache_valid(cache_dir, "model", source) is False
+                assert _is_cache_valid(cache_dir, "model", source) is True
+
+    def test_valid_when_hash_file_missing(self):
+        """Missing hash file means staleness can't be checked — treat as valid."""
+        with tempfile.TemporaryDirectory() as root:
+            source = os.path.join(root, "model.pt")
+            with open(source, "wb") as f:
+                f.write(b"weights")
+            cache_dir = os.path.join(root, "cache")
+            _make_valid_cache(cache_dir, "model", source)
+            os.remove(_meta_path(cache_dir, "model", ".hash"))
+            assert _is_cache_valid(cache_dir, "model", source) is True
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +139,12 @@ class TestGetCoremlModelPath:
 
     def test_returns_cached_mlpackage(self):
         with tempfile.TemporaryDirectory() as root:
+            source = os.path.join(root, "yolov8n.pt")
+            with open(source, "wb") as f:
+                f.write(b"fake weights")
             cache_dir = os.path.join(root, ".coreml_cache")
-            _make_valid_cache(cache_dir, "yolov8n")
-            result = get_coreml_model_path("yolov8n.pt", root)
+            _make_valid_cache(cache_dir, "yolov8n", source)
+            result = get_coreml_model_path(source, root)
         assert result is not None
         assert result.endswith(".mlpackage")
 

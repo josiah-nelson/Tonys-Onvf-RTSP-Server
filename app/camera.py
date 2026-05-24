@@ -115,6 +115,10 @@ class RTSPFrameGrabber:
                 try:
                     self.cap = self.cv2.VideoCapture(self.rtsp_url)
                     self.cap.set(self.cv2.CAP_PROP_BUFFERSIZE, 1)
+                    if self.cap.isOpened():
+                        reconnect_delay = GRABBER_RECONNECT_BASE
+                        last_frame_time = time.time()
+                        continue
                 except Exception as e:
                     print(f"  [AI Camera Grabber] Error connecting to {self.rtsp_url}: {e}")
                 last_frame_time = time.time()

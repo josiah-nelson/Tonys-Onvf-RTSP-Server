@@ -67,8 +67,8 @@ AI_CONFIDENCE_THRESHOLD = max(1, min(100, _env_int("AI_CONFIDENCE_THRESHOLD", 40
 AI_MOTION_SENSITIVITY = max(1, min(100, _env_int("AI_MOTION_SENSITIVITY", 50)))
 
 # RTSP frame grabber
-GRABBER_RECONNECT_BASE = max(0.5, _env_float("GRABBER_RECONNECT_BASE", 1.0))
 GRABBER_RECONNECT_MAX = max(1.0, _env_float("GRABBER_RECONNECT_MAX", 30.0))
+GRABBER_RECONNECT_BASE = min(max(0.5, _env_float("GRABBER_RECONNECT_BASE", 1.0)), GRABBER_RECONNECT_MAX)
 
 # Video encoding (GridFusion)
 import re as _re

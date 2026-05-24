@@ -12,9 +12,8 @@ Verifies that:
 import importlib
 import os
 import sys
+import types
 from unittest import mock
-
-import pytest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -31,13 +30,16 @@ _CONFIG_KEYS = [
 def _reload_config(**env_overrides):
     """Reload app.config with optional env var overrides.
 
-    Strips known config keys and stubs load_dotenv so that neither CI
-    env vars nor a developer's local .env file affect test assertions.
+    Removes app.config from sys.modules before reload and stubs the
+    dotenv module so load_dotenv never reads a local .env file.
     """
     clean_env = {k: v for k, v in os.environ.items() if k not in _CONFIG_KEYS}
     clean_env.update(env_overrides)
+    stub_dotenv = types.ModuleType("dotenv")
+    stub_dotenv.load_dotenv = lambda *a, **kw: None
+    sys.modules.pop("app.config", None)
     with mock.patch.dict(os.environ, clean_env, clear=True), \
-         mock.patch("app.config.load_dotenv", side_effect=None, create=True):
+         mock.patch.dict(sys.modules, {"dotenv": stub_dotenv}):
         import app.config
         importlib.reload(app.config)
         return app.config
@@ -147,6 +149,18 @@ class TestBoundaryValidation:
 
     def test_cooldown_minimum_0(self):
         assert _reload_config(AI_COOLDOWN_SECONDS="-1").AI_COOLDOWN_SECONDS == 0.0
+
+    def test_port_zero_falls_back(self):
+        assert _reload_config(WEB_UI_PORT="0").WEB_UI_PORT == 5552
+
+    def test_port_negative_falls_back(self):
+        assert _reload_config(MEDIAMTX_PORT="-1").MEDIAMTX_PORT == 8554
+
+    def test_port_too_high_falls_back(self):
+        assert _reload_config(WEB_UI_PORT="70000").WEB_UI_PORT == 5552
+
+    def test_port_65535_accepted(self):
+        assert _reload_config(WEB_UI_PORT="65535").WEB_UI_PORT == 65535
 
 
 class TestFFmpegParamValidation:

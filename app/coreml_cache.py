@@ -7,10 +7,10 @@ power than MPS/GPU. Exported models are cached to avoid re-export on restart.
 
 import hashlib
 import os
+import time
 
-_SENTINEL = ".export_complete"
-_HASH_FILE = ".source_hash"
 _HASH_BYTES = 64 * 1024
+_SKIP_TTL = 3600
 
 
 def _source_hash(model_path):
@@ -24,25 +24,58 @@ def _source_hash(model_path):
         return None
 
 
-def _is_cache_valid(cached_dir, source_model_path):
+def _meta_path(cache_dir, base, suffix):
+    """Return path for a sidecar metadata file alongside the .mlpackage."""
+    return os.path.join(cache_dir, base + suffix)
+
+
+def _is_cache_valid(cache_dir, base, source_model_path):
     """Check that a cached CoreML model is complete and not stale."""
-    sentinel = os.path.join(cached_dir, _SENTINEL)
+    sentinel = _meta_path(cache_dir, base, ".sentinel")
+    mlpackage = os.path.join(cache_dir, base + ".mlpackage")
+
     if not os.path.isfile(sentinel):
         return False
+    if not os.path.exists(mlpackage):
+        return False
+
     if os.path.isfile(source_model_path):
-        hash_file = os.path.join(cached_dir, _HASH_FILE)
-        if os.path.isfile(hash_file):
+        hash_file = _meta_path(cache_dir, base, ".hash")
+        current_hash = _source_hash(source_model_path)
+        if os.path.isfile(hash_file) and current_hash is not None:
             with open(hash_file) as f:
                 cached_hash = f.read().strip()
-            current_hash = _source_hash(source_model_path)
-            if current_hash and cached_hash != current_hash:
+            if cached_hash != current_hash:
                 return False
+        elif current_hash is None:
+            return False
         else:
-            source_mtime = os.path.getmtime(source_model_path)
-            cache_mtime = os.path.getmtime(sentinel)
-            if source_mtime > cache_mtime:
-                return False
+            return False
     return True
+
+
+def _should_skip_export(cache_dir, base):
+    """Check if a recent export failure marker exists (avoids retry storms)."""
+    skip_file = _meta_path(cache_dir, base, ".skip")
+    if os.path.isfile(skip_file):
+        try:
+            age = time.time() - os.path.getmtime(skip_file)
+            if age < _SKIP_TTL:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _write_skip_marker(cache_dir, base):
+    """Write a marker to suppress export retries for _SKIP_TTL seconds."""
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        skip_file = _meta_path(cache_dir, base, ".skip")
+        with open(skip_file, "w") as f:
+            f.write("skip")
+    except Exception:
+        pass
 
 
 def get_coreml_model_path(model_name, root_dir):
@@ -53,16 +86,23 @@ def get_coreml_model_path(model_name, root_dir):
     """
     cache_dir = os.path.join(root_dir, ".coreml_cache")
     base = os.path.splitext(os.path.basename(model_name))[0]
-    cached = os.path.join(cache_dir, base + "_coreml_model")
+    mlpackage = os.path.join(cache_dir, base + ".mlpackage")
 
-    if os.path.isdir(cached) and _is_cache_valid(cached, model_name):
-        print(f"  [AI] Using cached CoreML model: {cached}")
-        return cached
+    if _is_cache_valid(cache_dir, base, model_name):
+        print(f"  [AI] Using cached CoreML model: {mlpackage}")
+        return mlpackage
 
-    if os.path.isdir(cached):
+    for suffix in (".sentinel", ".hash"):
+        p = _meta_path(cache_dir, base, suffix)
+        if os.path.isfile(p):
+            os.remove(p)
+    if os.path.exists(mlpackage):
         import shutil
-        print(f"  [AI] Removing stale/incomplete CoreML cache: {cached}")
-        shutil.rmtree(cached, ignore_errors=True)
+        print(f"  [AI] Removing stale/incomplete CoreML cache: {mlpackage}")
+        shutil.rmtree(mlpackage, ignore_errors=True)
+
+    if _should_skip_export(cache_dir, base):
+        return None
 
     try:
         from ultralytics import YOLO
@@ -72,19 +112,25 @@ def get_coreml_model_path(model_name, root_dir):
         tmp_model = YOLO(model_name)
         exported_path = tmp_model.export(format="coreml", imgsz=640, nms=True)
         if exported_path and os.path.exists(exported_path):
-            shutil.move(exported_path, cached)
-            sentinel = os.path.join(cached, _SENTINEL)
-            with open(sentinel, "w") as f:
+            if os.path.exists(mlpackage):
+                shutil.rmtree(mlpackage, ignore_errors=True)
+            shutil.move(exported_path, mlpackage)
+            with open(_meta_path(cache_dir, base, ".sentinel"), "w") as f:
                 f.write("ok")
             src_hash = _source_hash(model_name)
             if src_hash:
-                with open(os.path.join(cached, _HASH_FILE), "w") as f:
+                with open(_meta_path(cache_dir, base, ".hash"), "w") as f:
                     f.write(src_hash)
-            print(f"  [AI] CoreML export cached at: {cached}")
-            return cached
+            print(f"  [AI] CoreML export cached at: {mlpackage}")
+            return mlpackage
     except Exception as e:
         print(f"  [AI] CoreML export failed ({e}), will use standard model")
-        if os.path.isdir(cached):
+        if os.path.exists(mlpackage):
             import shutil
-            shutil.rmtree(cached, ignore_errors=True)
+            shutil.rmtree(mlpackage, ignore_errors=True)
+        for suffix in (".sentinel", ".hash"):
+            p = _meta_path(cache_dir, base, suffix)
+            if os.path.isfile(p):
+                os.remove(p)
+        _write_skip_marker(cache_dir, base)
     return None

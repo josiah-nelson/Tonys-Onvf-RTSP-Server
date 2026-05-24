@@ -57,6 +57,9 @@ def get_shared_model(model_name):
             device = select_device()
             is_apple = (device == "mps")
 
+            # CoreML export (first-run) can take 30-60s while holding _AI_MODEL_LOCK.
+            # Moving it outside the lock would risk two threads exporting simultaneously.
+            # The skip marker in coreml_cache limits this to one slow startup per model.
             loaded = False
             if is_apple:
                 from .coreml_cache import get_coreml_model_path

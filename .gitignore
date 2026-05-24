@@ -36,6 +36,7 @@ ffprobe.exe
 camera_config.json
 mediamtx.yml
 *.log
+.env
 
 # IDEs
 .vscode/

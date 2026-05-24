@@ -11,7 +11,10 @@ import shlex
 import secrets
 import threading
 from pathlib import Path
-from .config import MEDIAMTX_PORT, MEDIAMTX_API_PORT, WEB_UI_PORT
+from .config import (
+    MEDIAMTX_PORT, MEDIAMTX_API_PORT, WEB_UI_PORT,
+    GF_VIDEO_BITRATE, GF_VIDEO_BUFSIZE, GF_ENCODER_PRESET,
+)
 
 class MediaMTXManager:
     """Manages MediaMTX RTSP server"""
@@ -366,7 +369,7 @@ class MediaMTXManager:
                             f'-vf "scale={tgt_w}:{tgt_h}:force_original_aspect_ratio=decrease,pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p" '
                             f'{ff_process} '
                             f'-profile:v high -level 4.2 '
-                            f'-b:v 2500k -maxrate 2500k -bufsize 5000k '
+                            f'-b:v {GF_VIDEO_BITRATE} -maxrate {GF_VIDEO_BITRATE} -bufsize {GF_VIDEO_BUFSIZE} '
                             f'-threads 2 -g {tgt_fps} -sc_threshold 0 '
                             f'-r {tgt_fps} '
                         )
@@ -637,7 +640,7 @@ class MediaMTXManager:
                         if use_hw_accel and hw_accel_info:
                              encoder_args = f'-c:v {hw_accel_info["encoder"]} {hw_accel_info["params"]}'
                         else:
-                            encoder_args = '-c:v libx264 -preset ultrafast -tune zerolatency'
+                            encoder_args = f'-c:v libx264 -preset {GF_ENCODER_PRESET} -tune zerolatency'
 
                         # Final command - optimized for multi-core CPU utilization and stability
                         # -threads 0: Auto-detect and use all available CPU cores
@@ -651,7 +654,7 @@ class MediaMTXManager:
                             f'{encoder_args} '
                             f'-profile:v high -level 4.2 '
                             f'-threads 0 '
-                            f'-b:v 2500k -maxrate 2500k -bufsize 5000k -g {fps} '
+                            f'-b:v {GF_VIDEO_BITRATE} -maxrate {GF_VIDEO_BITRATE} -bufsize {GF_VIDEO_BUFSIZE} -g {fps} '
                             f'-r {fps} -vsync cfr -max_delay 500000 -f rtsp -rtsp_transport tcp {safe_dest}'
                         )
                         

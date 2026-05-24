@@ -716,7 +716,7 @@ class MediaMTXManager:
                     "name": "Apple VideoToolbox",
                     "type": "videotoolbox",
                     "encoder": "h264_videotoolbox",
-                    "params": "-realtime 1 -allow_sw 1"
+                    "params": "-realtime 1 -allow_sw 0"
                 }
 
             return None

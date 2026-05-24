@@ -1,0 +1,65 @@
+"""AI device selection and shared model cache for local inference.
+
+Selects the best available compute device (Apple Silicon MPS or CPU)
+and manages a thread-safe cache of loaded YOLO models. On Apple Silicon,
+MPS uses unified memory so there is no CPU↔GPU copy overhead.
+"""
+
+import threading
+
+_AI_MODELS = {}
+_AI_MODEL_LOCK = threading.Lock()
+AI_INFERENCE_LOCK = threading.Lock()
+
+
+def select_device():
+    """Return the best available PyTorch device string for inference.
+
+    Prefers 'mps' (Metal Performance Shaders) on Apple Silicon,
+    falls back to 'cpu' everywhere else.
+    """
+    try:
+        import torch
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def get_shared_model(model_name):
+    """Load (or return cached) YOLO model on the best available device.
+
+    Thread-safe: multiple cameras share a single model instance per
+    model_name, avoiding redundant memory usage.
+    """
+    global _AI_MODELS
+    with _AI_MODEL_LOCK:
+        if model_name not in _AI_MODELS:
+            from ultralytics import YOLO
+            try:
+                import torch
+                torch.set_num_threads(2)
+            except Exception:
+                pass
+            device = select_device()
+            model = YOLO(model_name)
+            try:
+                model.to(device)
+            except Exception as e:
+                if device != "cpu":
+                    print(f"  [AI] Warning: {device} failed ({e}), falling back to CPU")
+                    device = "cpu"
+                    model.to(device)
+                else:
+                    raise
+            _AI_MODELS[model_name] = model
+            print(f"  [AI] Loaded {model_name} on device: {device}")
+        return _AI_MODELS[model_name]
+
+
+def clear_models():
+    """Clear the model cache. Intended for testing."""
+    global _AI_MODELS
+    with _AI_MODEL_LOCK:
+        _AI_MODELS.clear()

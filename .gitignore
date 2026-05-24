@@ -37,6 +37,7 @@ camera_config.json
 mediamtx.yml
 *.log
 .env
+.coreml_cache/
 
 # IDEs
 .vscode/

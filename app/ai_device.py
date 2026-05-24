@@ -55,18 +55,38 @@ def get_shared_model(model_name):
             except Exception:
                 pass
             device = select_device()
-            model = YOLO(model_name)
-            try:
-                model.to(device)
-            except Exception as e:
-                if device != "cpu":
-                    print(f"  [AI] Warning: {device} failed ({e}), falling back to CPU")
-                    device = "cpu"
+            is_apple = (device == "mps")
+
+            # CoreML export (first-run) can take 30-60s while holding _AI_MODEL_LOCK.
+            # Moving it outside the lock would risk two threads exporting simultaneously.
+            # The skip marker in coreml_cache limits this to one slow startup per model.
+            loaded = False
+            if is_apple:
+                from .coreml_cache import get_coreml_model_path
+                from .config import ROOT_DIR
+                coreml_path = get_coreml_model_path(model_name, ROOT_DIR)
+                if coreml_path:
+                    try:
+                        model = YOLO(coreml_path)
+                        _AI_MODELS[model_name] = model
+                        print(f"  [AI] Loaded {model_name} via CoreML (Apple Neural Engine)")
+                        loaded = True
+                    except Exception as e:
+                        print(f"  [AI] CoreML model load failed ({e}), falling back")
+
+            if not loaded:
+                model = YOLO(model_name)
+                try:
                     model.to(device)
-                else:
-                    raise
-            _AI_MODELS[model_name] = model
-            print(f"  [AI] Loaded {model_name} on device: {device}")
+                except Exception as e:
+                    if device != "cpu":
+                        print(f"  [AI] Warning: {device} failed ({e}), falling back to CPU")
+                        device = "cpu"
+                        model.to(device)
+                    else:
+                        raise
+                _AI_MODELS[model_name] = model
+                print(f"  [AI] Loaded {model_name} on device: {device}")
         return _AI_MODELS[model_name]
 
 

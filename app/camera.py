@@ -817,6 +817,8 @@ class VirtualONVIFCamera:
         startup_frames = 0
         startup_grace = 5  # Skip first N frames to establish baseline
         last_loop_time = 0
+        consecutive_errors = 0
+        max_consecutive_errors = 20
         
         # Zone-aware motion masking: only detect motion inside the drawn zone
         import numpy as np
@@ -893,7 +895,10 @@ class VirtualONVIFCamera:
                             t_queue_start = time.time()
                             with _AI_INFERENCE_LOCK:
                                 t_inference_start = time.time()
-                                results = model(frame, verbose=False, conf=conf_threshold, classes=monitored_classes, device=model.device)
+                                infer_kwargs = {"verbose": False, "conf": conf_threshold, "classes": monitored_classes}
+                                if hasattr(model, "device") and model.device is not None:
+                                    infer_kwargs["device"] = model.device
+                                results = model(frame, **infer_kwargs)
                                 t_inference_end = time.time()
                                 
                             self.ai_queue_time = round(t_inference_start - t_queue_start, 3)
@@ -950,9 +955,16 @@ class VirtualONVIFCamera:
                                     motion_state = False
                                     self._trigger_ai_motion(False, [])
                                     
+                    consecutive_errors = 0
                 except Exception as ex:
+                    consecutive_errors += 1
                     print(f"  [AI Camera ({self.name})] Error in inference loop: {ex}")
-                    
+                    if consecutive_errors >= max_consecutive_errors:
+                        print(f"  [AI Camera ({self.name})] AI disabled after {consecutive_errors} consecutive errors")
+                        self._ai_running = False
+                        break
+
+            # Target frame rate: ~2.0 FPS (1 frame every 500ms)
             elapsed = time.time() - loop_start
             sleep_time = max(0.01, AI_TARGET_INTERVAL - elapsed)
             time.sleep(sleep_time)

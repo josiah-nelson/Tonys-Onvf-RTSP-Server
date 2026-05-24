@@ -11,7 +11,10 @@ from datetime import datetime
 import os
 from concurrent.futures import ThreadPoolExecutor
 from werkzeug.serving import make_server, ThreadedWSGIServer
-from .config import MEDIAMTX_PORT
+from .config import (
+    MEDIAMTX_PORT, WSGI_MAX_WORKERS, AI_DEFAULT_MODEL,
+    AI_INFERENCE_FRAME_WIDTH, AI_COOLDOWN_SECONDS, AI_TARGET_INTERVAL,
+)
 from .onvif_service import ONVIFService
 from .linux_network import LinuxNetworkManager
 from .utils import get_local_ip
@@ -21,7 +24,7 @@ from .ai_device import get_shared_model as get_shared_ai_model, AI_INFERENCE_LOC
 class ThreadPoolWSGIServer(ThreadedWSGIServer):
     """Custom WSGI server with a fixed-size thread pool to prevent thread exhaustion"""
     
-    def __init__(self, host, port, app, max_workers=20, **kwargs):
+    def __init__(self, host, port, app, max_workers=WSGI_MAX_WORKERS, **kwargs):
         super().__init__(host, port, app, **kwargs)
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.max_workers = max_workers
@@ -197,7 +200,7 @@ class VirtualONVIFCamera:
         # AI Event Detection settings
         self.event_source = config.get('eventSource', 'onvif')  # 'onvif' or 'ai'
         self.ai_targets = config.get('aiTargets', ['person', 'vehicle'])
-        self.ai_model = config.get('aiModel', 'yolov8n.pt')
+        self.ai_model = config.get('aiModel', AI_DEFAULT_MODEL)
         self.ai_motion_detection_enabled = config.get('aiMotionDetectionEnabled', True)
         self.ai_motion_sensitivity = config.get('aiMotionSensitivity', 50)
         self.ai_confidence_threshold = config.get('aiConfidenceThreshold', 40)
@@ -346,8 +349,8 @@ class VirtualONVIFCamera:
         
         # Replace the server class with our thread-pooled version
         server.__class__ = ThreadPoolWSGIServer
-        server.executor = ThreadPoolExecutor(max_workers=20)
-        server.max_workers = 20
+        server.executor = ThreadPoolExecutor(max_workers=WSGI_MAX_WORKERS)
+        server.max_workers = WSGI_MAX_WORKERS
         
         self.server = server
         
@@ -809,7 +812,7 @@ class VirtualONVIFCamera:
         
         motion_state = False
         last_detected_time = 0
-        cooldown_period = 5.0  # seconds
+        cooldown_period = AI_COOLDOWN_SECONDS
         prev_gray = None
         startup_frames = 0
         startup_grace = 5  # Skip first N frames to establish baseline
@@ -830,11 +833,10 @@ class VirtualONVIFCamera:
             raw_frame = grabber.latest_frame
             if raw_frame is not None:
                 try:
-                    # Optimize CPU usage by resizing frame to a max width of 640px before processing
                     h, w = raw_frame.shape[:2]
-                    if w > 640:
-                        scale = 640.0 / w
-                        frame = cv2.resize(raw_frame, (640, int(h * scale)))
+                    if w > AI_INFERENCE_FRAME_WIDTH:
+                        scale = float(AI_INFERENCE_FRAME_WIDTH) / w
+                        frame = cv2.resize(raw_frame, (AI_INFERENCE_FRAME_WIDTH, int(h * scale)))
                     else:
                         frame = raw_frame
                         
@@ -951,9 +953,8 @@ class VirtualONVIFCamera:
                 except Exception as ex:
                     print(f"  [AI Camera ({self.name})] Error in inference loop: {ex}")
                     
-            # Target frame rate: ~2.0 FPS (1 frame every 500ms)
             elapsed = time.time() - loop_start
-            sleep_time = max(0.01, 0.50 - elapsed)
+            sleep_time = max(0.01, AI_TARGET_INTERVAL - elapsed)
             time.sleep(sleep_time)
             
         grabber.stop()

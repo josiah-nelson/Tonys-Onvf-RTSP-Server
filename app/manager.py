@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import quote
 from werkzeug.security import generate_password_hash, check_password_hash
 import ipaddress
-from .config import CONFIG_FILE, MEDIAMTX_PORT, MEDIAMTX_API_PORT
+from .config import CONFIG_FILE, MEDIAMTX_PORT, MEDIAMTX_API_PORT, ONVIF_BASE_PORT
 from .camera import VirtualONVIFCamera
 from .onvif_service import ONVIFService
 from .mediamtx_manager import MediaMTXManager
@@ -25,7 +25,7 @@ class CameraManager:
         self.config_file = config_file
         self.cameras = []
         self.next_id = 1
-        self.next_onvif_port = 8001
+        self.next_onvif_port = ONVIF_BASE_PORT
         self.mediamtx = MediaMTXManager()
         self.service_mgr = LinuxServiceManager()
         self.analytics = AnalyticsManager()
@@ -91,7 +91,7 @@ class CameraManager:
             # Clear existing cameras before loading to prevent duplicates
             self.cameras.clear()
             self.next_id = 1
-            self.next_onvif_port = 8001
+            self.next_onvif_port = ONVIF_BASE_PORT
                 
             for cam_config in config.get('cameras', []):
                 camera = VirtualONVIFCamera(cam_config, self)
